@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #e94560;
+  --color-primary-foreground: #ffffff;
+  
+  /* Theme-aware variables */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-card: var(--card);
+}
+
+:root {
+  --bg: #fdfdfd;
+  --fg: #1a1a1a;
+  --border: #e8e8e8;
+  --accent: rgba(0, 0, 0, 0.03);
+  --card: #ffffff;
+  --muted: #71717a;
+  --scrollbar: rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  --bg: #09090b;
+  --fg: #fafafa;
+  --border: rgba(255, 255, 255, 0.1);
+  --accent: rgba(255, 255, 255, 0.05);
+  --card: #18181b;
+  --muted: #a1a1aa;
+  --scrollbar: rgba(255, 255, 255, 0.1);
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased transition-colors duration-300 select-none;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Markdown Styling */
+.prose {
+  color: inherit;
+}
+
+.prose p {
+  margin-bottom: 0.5rem;
+}
+
+.prose code {
+  @apply bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded text-rose-600 dark:text-rose-400 font-mono text-xs;
+}
+
+.prose pre {
+  @apply bg-slate-900 dark:bg-black/40 p-4 rounded-xl border border-border my-4 overflow-x-auto text-slate-100;
+}
+
+.prose ul {
+  @apply list-disc list-inside mb-4;
+}

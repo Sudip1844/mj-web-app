@@ -1,0 +1,8 @@
+{
+  "name": "MJ Control Center",
+  "description": "Advanced AI Assistant Control Dashboard with real-time monitoring and Gemini-powered chat.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
