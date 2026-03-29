@@ -1,4 +1,12 @@
-export type TabType = 'voice' | 'privacy' | 'settings' | 'about' | 'monitor' | 'apps' | 'configure' | 'alerts' | 'chat' | 'visualizer';
+export type TabType = 'voice' | 'privacy' | 'settings' | 'about' | 'monitor' | 'apps' | 'configure' | 'alerts' | 'chat' | 'visualizer' | 'subagents';
+
+export interface SubAgent {
+  id: string;
+  name: string;
+  provider: 'anthropic' | 'openrouter' | 'openai' | 'grok' | 'groq' | 'deepseek' | 'google' | 'nvidia' | 'together';
+  model: string;
+  apiKey: string;
+}
 
 export interface Message {
   id: string;

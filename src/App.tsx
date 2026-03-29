@@ -8,7 +8,7 @@ import {
   Mic, Shield, Settings, Info, Activity, Grid, Wrench, Bell, MessageSquare, 
   Power, Cpu, HardDrive, Battery, CheckCircle2, XCircle, RefreshCw, Paperclip, Send,
   User, Bot, AlertCircle, Image as ImageIcon, Trash2, Moon, Sun, Search,
-  ShieldAlert, Lock, FileWarning, Pencil, Check, Save, ShieldCheck, Camera, Menu
+  ShieldAlert, Lock, FileWarning, Pencil, Check, Save, ShieldCheck, Camera, Menu, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/src/lib/utils';
@@ -118,6 +118,18 @@ export default function App() {
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [appPermissions, setAppPermissions] = useState<AppPermission[]>([]);
   
+  // --- New State for Sub Agents ---
+  const [subAgents, setSubAgents] = useState<SubAgent[]>([
+    { id: '1', name: 'Default Anthropic', provider: 'anthropic', model: 'claude-3-opus-20240229', apiKey: '' },
+    { id: '2', name: 'Default OpenAI', provider: 'openai', model: 'gpt-4-turbo', apiKey: '' }
+  ]);
+  const [selectedSubAgentId, setSelectedSubAgentId] = useState<string>('1');
+  const [isAddingSubAgent, setIsAddingSubAgent] = useState(false);
+  const [newSubAgent, setNewSubAgent] = useState<Partial<SubAgent>>({ provider: 'anthropic', model: '' });
+  const [subAgentMessages, setSubAgentMessages] = useState<Record<string, Message[]>>({});
+  const [subAgentInput, setSubAgentInput] = useState('');
+  const [isSubAgentTyping, setIsSubAgentTyping] = useState(false);
+  
   // --- New State for Settings ---
   const [settings, setSettings] = useState({
     micEnabled: true,
@@ -210,6 +222,119 @@ export default function App() {
   }, [messages, isThinking]);
 
   // --- Handlers ---
+  const handleSubAgentSendMessage = async () => {
+    if (!subAgentInput.trim() || !selectedSubAgentId) return;
+
+    const agent = subAgents.find(a => a.id === selectedSubAgentId);
+    if (!agent) return;
+
+    if (!agent.apiKey) {
+      const errorMsg: Message = { id: Date.now().toString(), role: 'system', text: `Please configure the API key for ${agent.name} first.`, timestamp: new Date() };
+      setSubAgentMessages(prev => ({
+        ...prev,
+        [selectedSubAgentId]: [...(prev[selectedSubAgentId] || []), errorMsg]
+      }));
+      return;
+    }
+
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', text: subAgentInput, timestamp: new Date() };
+    
+    setSubAgentMessages(prev => ({
+      ...prev,
+      [selectedSubAgentId]: [...(prev[selectedSubAgentId] || []), userMsg]
+    }));
+    setSubAgentInput('');
+    setIsSubAgentTyping(true);
+
+    try {
+      let responseText = "";
+      const history = (subAgentMessages[selectedSubAgentId] || []).filter(m => m.role === 'user' || m.role === 'mj').map(m => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.text
+      }));
+      history.push({ role: 'user', content: userMsg.text });
+
+      if (agent.provider === 'anthropic') {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': agent.apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerously-allow-browser': 'true'
+          },
+          body: JSON.stringify({
+            model: agent.model,
+            max_tokens: 4096,
+            messages: history
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        responseText = data.content[0].text;
+      } else if (agent.provider === 'google') {
+        const googleHistory = (subAgentMessages[selectedSubAgentId] || []).filter(m => m.role === 'user' || m.role === 'mj').map(m => ({
+          role: m.role === 'user' ? 'user' : 'model',
+          parts: [{ text: m.text }]
+        }));
+        googleHistory.push({ role: 'user', parts: [{ text: userMsg.text }] });
+
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${agent.model}:generateContent?key=${agent.apiKey}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: googleHistory
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        responseText = data.candidates[0].content.parts[0].text;
+      } else {
+        // OpenAI compatible (OpenAI, OpenRouter, Grok, Groq, DeepSeek, Nvidia, Together)
+        let endpoint = 'https://api.openai.com/v1/chat/completions';
+        if (agent.provider === 'openrouter') endpoint = 'https://openrouter.ai/api/v1/chat/completions';
+        if (agent.provider === 'grok') endpoint = 'https://api.x.ai/v1/chat/completions';
+        if (agent.provider === 'groq') endpoint = 'https://api.groq.com/openai/v1/chat/completions';
+        if (agent.provider === 'deepseek') endpoint = 'https://api.deepseek.com/chat/completions';
+        if (agent.provider === 'nvidia') endpoint = 'https://integrate.api.nvidia.com/v1/chat/completions';
+        if (agent.provider === 'together') endpoint = 'https://api.together.xyz/v1/chat/completions';
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${agent.apiKey}`
+          },
+          body: JSON.stringify({
+            model: agent.model,
+            messages: history
+          })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error.message);
+        responseText = data.choices[0].message.content;
+      }
+
+      const aiMsg: Message = { id: Date.now().toString(), role: 'mj', text: responseText, timestamp: new Date() };
+      setSubAgentMessages(prev => ({
+        ...prev,
+        [selectedSubAgentId]: [...(prev[selectedSubAgentId] || []), userMsg, aiMsg]
+      }));
+
+    } catch (error: any) {
+      console.error(error);
+      const errorMsg: Message = { id: Date.now().toString(), role: 'system', text: `Error: ${error.message}`, timestamp: new Date() };
+      setSubAgentMessages(prev => ({
+        ...prev,
+        [selectedSubAgentId]: [...(prev[selectedSubAgentId] || []), userMsg, errorMsg]
+      }));
+    } finally {
+      setIsSubAgentTyping(false);
+    }
+  };
+
   const handleSendMessage = async () => {
     if (!inputText.trim() && !attachedImage) return;
     if (!isPowerOn) {
@@ -362,6 +487,7 @@ export default function App() {
 
         <nav className="flex flex-col gap-1 flex-1">
           <SidebarItem id="chat" icon={MessageSquare} label="Chat" />
+          <SidebarItem id="subagents" icon={Bot} label="Sub Agents" />
           <SidebarItem id="monitor" icon={Activity} label="Monitor" />
           <SidebarItem id="visualizer" icon={ImageIcon} label="Visualizer" />
           <SidebarItem id="alerts" icon={Bell} label="Alerts" />
@@ -535,6 +661,276 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'subagents' && (
+              <motion.div 
+                key="subagents"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="h-full flex flex-col gap-4 w-full max-w-5xl mx-auto overflow-hidden"
+              >
+                {/* Sub Agents Header & Dropdown */}
+                <div className="flex items-center justify-between bg-card p-4 rounded-2xl border border-border shadow-sm">
+                  <div className="flex items-center gap-4">
+                    <Bot className="text-primary" size={24} />
+                    <div className="flex flex-col">
+                      <h2 className="text-lg font-bold">Sub Agents</h2>
+                      <span className="text-xs text-muted-foreground">Manage and chat with external AI models</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center bg-background border border-border rounded-xl focus-within:ring-2 focus-within:ring-primary/20 overflow-hidden">
+                    <div className="relative flex-1">
+                      <select
+                        value={selectedSubAgentId}
+                        onChange={(e) => setSelectedSubAgentId(e.target.value)}
+                        className="w-full appearance-none bg-transparent px-4 py-2 pr-8 text-sm font-medium focus:outline-none cursor-pointer"
+                      >
+                        {subAgents.map(agent => (
+                          <option key={agent.id} value={agent.id}>
+                            {agent.name} ({agent.provider})
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-muted-foreground text-xs">
+                        ▼
+                      </div>
+                    </div>
+                    <div className="w-px h-6 bg-border"></div>
+                    <button
+                      onClick={() => setIsAddingSubAgent(true)}
+                      className="px-3 py-2 text-primary hover:bg-primary/10 transition-colors flex items-center justify-center"
+                      title="Add new Sub Agent"
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub Agent Chat Area */}
+                <div className="flex-1 overflow-y-auto space-y-6 pb-4 pr-2 scrollbar-thin scrollbar-thumb-scrollbar bg-card/30 rounded-2xl border border-border/50 p-4">
+                  {(!subAgentMessages[selectedSubAgentId] || subAgentMessages[selectedSubAgentId].length === 0) ? (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-50 space-y-4">
+                      <Bot size={48} />
+                      <p>Select a Sub Agent to start chatting.</p>
+                      <p className="text-xs">Messages sent here will be routed to the selected provider's API.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {subAgentMessages[selectedSubAgentId].map(msg => (
+                        <div 
+                          key={msg.id}
+                          className={cn(
+                            "flex flex-col gap-2",
+                            msg.role === 'user' ? "items-end" : "items-start"
+                          )}
+                        >
+                          <div className="flex items-center gap-2 px-2">
+                            {msg.role === 'user' ? (
+                              <>
+                                <span className="text-[10px] opacity-50">{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span className="text-xs font-bold text-blue-400">You</span>
+                              </>
+                            ) : msg.role === 'mj' ? (
+                              <>
+                                <span className="text-xs font-bold text-rose-500">{subAgents.find(a => a.id === selectedSubAgentId)?.name || 'AI'}</span>
+                                <span className="text-[10px] opacity-50">{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </>
+                            ) : null}
+                          </div>
+
+                          <div className={cn(
+                            "max-w-[90%] md:max-w-[85%] rounded-2xl p-3 md:p-4 text-xs md:text-sm leading-relaxed shadow-sm transition-colors duration-200",
+                            msg.role === 'user' ? "bg-blue-600 text-white rounded-tr-none shadow-blue-500/10" : 
+                            msg.role === 'mj' ? "bg-card text-foreground border border-border rounded-tl-none" :
+                            "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 w-full text-center"
+                          )}>
+                            <div className={cn(
+                              "prose prose-sm max-w-none",
+                              isDarkMode ? "prose-invert" : ""
+                            )}>
+                              <Markdown>{msg.text}</Markdown>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {isSubAgentTyping && (
+                        <div className="flex items-center gap-2 text-rose-500 px-4">
+                          <Bot size={16} className="animate-bounce" />
+                          <span className="text-xs font-medium animate-pulse">Agent is thinking...</span>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub Agent Input Area */}
+                <div className="sticky bottom-0 pt-2">
+                   <div className={cn(
+                    "flex items-end gap-2 p-1.5 md:p-2 rounded-2xl border transition-all focus-within:ring-4 focus-within:ring-primary/10",
+                    "bg-card border-border shadow-lg"
+                  )}>
+                    <textarea
+                      value={subAgentInput}
+                      onChange={(e) => setSubAgentInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSubAgentSendMessage())}
+                      placeholder={`Message ${subAgents.find(a => a.id === selectedSubAgentId)?.name || 'Sub Agent'}...`}
+                      className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-sm max-h-32"
+                      rows={1}
+                      disabled={!selectedSubAgentId || isSubAgentTyping}
+                    />
+                    <button 
+                      onClick={handleSubAgentSendMessage}
+                      disabled={!selectedSubAgentId || !subAgentInput.trim() || isSubAgentTyping}
+                      className="p-2 md:p-3 bg-primary text-primary-foreground rounded-xl shadow-lg shadow-primary/20 disabled:opacity-50 transition-all active:scale-95"
+                    >
+                      <Send size={18} className="md:w-5 md:h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Add Sub Agent Modal */}
+                <AnimatePresence>
+                  {isAddingSubAgent && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+                    >
+                      <motion.div
+                        initial={{ scale: 0.95, y: 20 }}
+                        animate={{ scale: 1, y: 0 }}
+                        exit={{ scale: 0.95, y: 20 }}
+                        className="bg-card border border-border rounded-3xl p-6 shadow-2xl w-full max-w-md space-y-6"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xl font-bold flex items-center gap-2">
+                            <Bot className="text-primary" /> Add Sub Agent
+                          </h3>
+                          <button 
+                            onClick={() => setIsAddingSubAgent(false)}
+                            className="p-2 hover:bg-accent rounded-full text-muted-foreground transition-colors"
+                          >
+                            <XCircle size={20} />
+                          </button>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold uppercase tracking-widest opacity-70">Agent Name</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g., Coding Assistant"
+                              value={newSubAgent.name || ''}
+                              onChange={e => setNewSubAgent({...newSubAgent, name: e.target.value})}
+                              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold uppercase tracking-widest opacity-70">Provider</label>
+                            <select 
+                              value={newSubAgent.provider || 'anthropic'}
+                              onChange={e => {
+                                const provider = e.target.value as any;
+                                let defaultModel = '';
+                                if (provider === 'anthropic') defaultModel = 'claude-3-opus-20240229';
+                                else if (provider === 'openai') defaultModel = 'gpt-4-turbo';
+                                else if (provider === 'openrouter') defaultModel = 'meta-llama/llama-3-70b-instruct';
+                                else if (provider === 'grok') defaultModel = 'grok-beta';
+                                else if (provider === 'groq') defaultModel = 'llama3-8b-8192';
+                                else if (provider === 'deepseek') defaultModel = 'deepseek-chat';
+                                else if (provider === 'google') defaultModel = 'gemini-2.5-flash';
+                                else if (provider === 'nvidia') defaultModel = 'meta/llama3-70b-instruct';
+                                else if (provider === 'together') defaultModel = 'meta-llama/Llama-3-70b-chat-hf';
+                                
+                                setNewSubAgent({...newSubAgent, provider, model: defaultModel});
+                              }}
+                              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none appearance-none"
+                            >
+                              <option value="anthropic">Anthropic</option>
+                              <option value="openai">OpenAI</option>
+                              <option value="openrouter">OpenRouter</option>
+                              <option value="grok">Grok (xAI)</option>
+                              <option value="groq">Groq</option>
+                              <option value="deepseek">DeepSeek</option>
+                              <option value="google">Google AI Studio (Gemini)</option>
+                              <option value="nvidia">Nvidia (NIM)</option>
+                              <option value="together">Together AI</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold uppercase tracking-widest opacity-70">Model</label>
+                            <input 
+                              type="text" 
+                              placeholder={
+                                newSubAgent.provider === 'anthropic' ? 'claude-3-opus-20240229' :
+                                newSubAgent.provider === 'openai' ? 'gpt-4-turbo' : 
+                                newSubAgent.provider === 'grok' ? 'grok-beta' :
+                                newSubAgent.provider === 'groq' ? 'llama3-8b-8192' :
+                                newSubAgent.provider === 'deepseek' ? 'deepseek-chat' :
+                                newSubAgent.provider === 'google' ? 'gemini-2.5-flash' :
+                                newSubAgent.provider === 'nvidia' ? 'meta/llama3-70b-instruct' :
+                                newSubAgent.provider === 'together' ? 'meta-llama/Llama-3-70b-chat-hf' :
+                                'meta-llama/llama-3-70b-instruct'
+                              }
+                              value={newSubAgent.model || ''}
+                              onChange={e => setNewSubAgent({...newSubAgent, model: e.target.value})}
+                              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold uppercase tracking-widest opacity-70">API Key</label>
+                            <input 
+                              type="password" 
+                              placeholder="sk-..."
+                              value={newSubAgent.apiKey || ''}
+                              onChange={e => setNewSubAgent({...newSubAgent, apiKey: e.target.value})}
+                              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-3 pt-2">
+                          <button 
+                            onClick={() => setIsAddingSubAgent(false)}
+                            className="flex-1 py-3 rounded-xl border border-border font-bold text-sm hover:bg-accent transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button 
+                            onClick={() => {
+                              if (newSubAgent.name && newSubAgent.provider && newSubAgent.model && newSubAgent.apiKey) {
+                                const agent: SubAgent = {
+                                  id: Date.now().toString(),
+                                  name: newSubAgent.name,
+                                  provider: newSubAgent.provider as any,
+                                  model: newSubAgent.model,
+                                  apiKey: newSubAgent.apiKey
+                                };
+                                setSubAgents([...subAgents, agent]);
+                                setSelectedSubAgentId(agent.id);
+                                setIsAddingSubAgent(false);
+                                setNewSubAgent({ provider: 'anthropic', model: '' });
+                              }
+                            }}
+                            disabled={!newSubAgent.name || !newSubAgent.model || !newSubAgent.apiKey}
+                            className="flex-1 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm shadow-lg shadow-primary/20 disabled:opacity-50 transition-all active:scale-95"
+                          >
+                            Save Agent
+                          </button>
+                        </div>
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             )}
 
